@@ -1,9 +1,10 @@
-//! Judgement event model + the non-blocking hand-off from the game thread.
+//! Event model (judgements, song start/end) + the non-blocking hand-off from
+//! the game thread.
 use serde::Serialize;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     mpsc::{SyncSender, TrySendError},
-    OnceLock,
+    Mutex, OnceLock,
 };
 
 /// AstroDX.Models.Scoring.JudgeData (struct, 2 doubles; passed by value as an HFA)
@@ -35,11 +36,22 @@ const STYLE_EX: i32 = 8;
 const STYLE_FIREWORKS: i32 = 16;
 const STYLE_MINE: i32 = 32;
 
+/// Everything sent to clients; serialised without a wrapper (each variant has `type`).
 #[derive(Serialize)]
-pub struct Event {
+#[serde(untagged)]
+pub enum Event {
+    Judge(Judge),
+    SongStart(SongStart),
+    SongEnd(SongEnd),
+}
+
+#[derive(Serialize)]
+pub struct Judge {
     #[serde(rename = "type")]
     kind: &'static str,
     seq: u64,
+    /// id of the song_start this judgement belongs to (0 = none seen)
+    play: u64,
     /// ms since the hook library was loaded (monotonic)
     t_ms: f64,
     cat: &'static str,
@@ -87,7 +99,11 @@ fn is_constant(d: &JudgeData) -> bool {
     d.offset == 0.0 && d.interpolation.fract() == 0.0 && (0.0..=4.0).contains(&d.interpolation)
 }
 
-impl Event {
+fn now_ms() -> f64 {
+    crate::START.get().map_or(0.0, |s| s.elapsed().as_secs_f64() * 1e3)
+}
+
+impl Judge {
     pub fn new(category: i32, d: JudgeData, ctx: Option<NoteCtx>) -> Self {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let grade_i = d.interpolation.is_finite().then(|| (d.interpolation as i32).clamp(0, 4));
@@ -104,7 +120,8 @@ impl Event {
         Self {
             kind: "judge",
             seq: SEQ.fetch_add(1, Ordering::Relaxed),
-            t_ms: crate::START.get().map_or(0.0, |s| s.elapsed().as_secs_f64() * 1e3),
+            play: PLAY.load(Ordering::Relaxed),
+            t_ms: now_ms(),
             cat: cat_name(category),
             grade: grade_i.map_or("Unknown", |g| GRADE[g as usize]),
             grade_i,
@@ -123,20 +140,122 @@ impl Event {
     }
 }
 
+/// What is being played, read from DataSystem / Difficulty / Level when the
+/// gameplay scene initialises.
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct SongInfo {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    /// display name, e.g. "Master", "Re:Master" (Difficulty.Alias)
+    pub difficulty: Option<String>,
+    /// simai chart index: &inote_<id>
+    pub difficulty_id: i32,
+    /// level text from the chart, e.g. "13.4", "12.7?"
+    pub level: Option<String>,
+    pub charter: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SongStart {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    play: u64,
+    t_ms: f64,
+    #[serde(flatten)]
+    song: SongInfo,
+}
+
+#[derive(Serialize, Default, Clone, Copy)]
+#[serde(rename_all = "PascalCase")]
+pub struct GradeCounts {
+    pub critical_perfect: u64,
+    pub perfect: u64,
+    pub great: u64,
+    pub good: u64,
+    pub miss: u64,
+}
+
+#[derive(Serialize)]
+pub struct SongEnd {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    play: u64,
+    t_ms: f64,
+    /// "finish" (played to the end), "restart", "quit", or "unknown" (the next
+    /// song started without an end being seen)
+    reason: &'static str,
+    /// ms since this play's song_start
+    duration_ms: f64,
+    /// judgements sent for this play
+    judged: u64,
+    grades: GradeCounts,
+}
+
 static TX: OnceLock<SyncSender<Event>> = OnceLock::new();
 pub static DROPPED: AtomicU64 = AtomicU64::new(0);
+/// current play id (incremented by every song_start)
+static PLAY: AtomicU64 = AtomicU64::new(0);
+/// per-grade judgement counts of the current play (index = grade_i)
+static COUNTS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+/// the song_start of the play in progress; None between plays
+static CURRENT: Mutex<Option<SongStart>> = Mutex::new(None);
 
 pub fn install_sender(tx: SyncSender<Event>) {
     let _ = TX.set(tx);
 }
 
-/// Called on the game thread: must never block.
-pub fn emit(ev: Event) {
+fn send(ev: Event) {
     if let Some(tx) = TX.get() {
         if let Err(TrySendError::Full(_)) = tx.try_send(ev) {
             DROPPED.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// Called on the game thread: must never block.
+pub fn emit(j: Judge) {
+    if let Some(g) = j.grade_i {
+        COUNTS[g as usize].fetch_add(1, Ordering::Relaxed);
+    }
+    send(Event::Judge(j));
+}
+
+/// The gameplay scene was set up for `song`. A play still open (its end was
+/// not seen) is closed first, so every song_start is paired with a song_end.
+pub fn song_start(song: SongInfo) {
+    song_end("unknown");
+    let play = PLAY.fetch_add(1, Ordering::Relaxed) + 1;
+    for c in &COUNTS {
+        c.store(0, Ordering::Relaxed);
+    }
+    let ev = SongStart { kind: "song_start", play, t_ms: now_ms(), song };
+    *CURRENT.lock().unwrap_or_else(|e| e.into_inner()) = Some(ev.clone());
+    send(Event::SongStart(ev));
+}
+
+/// The play in progress ended; no-op if none is.
+pub fn song_end(reason: &'static str) {
+    let Some(start) = CURRENT.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+        return;
+    };
+    let c = |i: usize| COUNTS[i].load(Ordering::Relaxed);
+    let grades = GradeCounts { critical_perfect: c(0), perfect: c(1), great: c(2), good: c(3), miss: c(4) };
+    let t_ms = now_ms();
+    send(Event::SongEnd(SongEnd {
+        kind: "song_end",
+        play: start.play,
+        t_ms,
+        reason,
+        duration_ms: t_ms - start.t_ms,
+        judged: (0..5).map(c).sum(),
+        grades,
+    }));
+}
+
+/// For the hello message: the song being played right now, if any.
+pub fn current_song() -> Option<serde_json::Value> {
+    let cur = CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+    cur.as_ref().and_then(|s| serde_json::to_value(s).ok())
 }
 
 #[cfg(test)]
@@ -151,26 +270,54 @@ mod tests {
     }
     #[test]
     fn grades() {
-        let e = Event::new(0, JudgeData { interpolation: 2.3, offset: -0.06 }, None);
+        let e = Judge::new(0, JudgeData { interpolation: 2.3, offset: -0.06 }, None);
         assert_eq!((e.grade, e.state, e.cat, e.synthetic), ("Great", Some("Early"), "Tap", false));
-        let e = Event::new(1, JudgeData { interpolation: 0.2, offset: 0.01 }, None);
+        let e = Judge::new(1, JudgeData { interpolation: 0.2, offset: 0.01 }, None);
         assert_eq!(e.state, Some("Exact"));
-        let e = Event::new(0, JudgeData { interpolation: 1.5, offset: 0.03 }, None);
+        let e = Judge::new(0, JudgeData { interpolation: 1.5, offset: 0.03 }, None);
         assert_eq!(e.state, Some("Late"));
     }
     #[test]
     fn misses_and_constants() {
         // JudgeData.Miss: synthetic, no offset
-        let e = Event::new(0, JudgeData { interpolation: 4.0, offset: 0.0 }, None);
+        let e = Judge::new(0, JudgeData { interpolation: 4.0, offset: 0.0 }, None);
         assert_eq!((e.grade, e.state, e.synthetic, e.offset_ms), ("Miss", Some("Miss"), true, None));
         // slide missed with a real (late) offset: keeps it
-        let e = Event::new(3, JudgeData { interpolation: 4.0, offset: 0.7105 }, None);
+        let e = Judge::new(3, JudgeData { interpolation: 4.0, offset: 0.7105 }, None);
         assert_eq!((e.state, e.synthetic), (Some("Miss"), false));
         assert!((e.offset_ms.unwrap() - 710.5).abs() < 1e-9);
         // JudgeData.Good handed out for an unfinished slide: no direction
-        let e = Event::new(3, JudgeData { interpolation: 3.0, offset: 0.0 }, None);
+        let e = Judge::new(3, JudgeData { interpolation: 3.0, offset: 0.0 }, None);
         assert_eq!((e.grade, e.state, e.synthetic, e.offset_ms), ("Good", None, true, None));
-        let e = Event::new(0, JudgeData { interpolation: f64::NAN, offset: 0.0 }, None);
+        let e = Judge::new(0, JudgeData { interpolation: f64::NAN, offset: 0.0 }, None);
         assert_eq!((e.grade, e.state), ("Unknown", None));
+    }
+
+    #[test]
+    fn song_lifecycle() {
+        // no sender installed: send() is a no-op, the state machine still runs
+        song_end("quit"); // nothing open: no-op
+        assert!(current_song().is_none());
+        let info = SongInfo { title: Some("系ぎて".into()), difficulty: Some("Re:Master".into()),
+            difficulty_id: 6, level: Some("15.0".into()), ..Default::default() };
+        song_start(info.clone());
+        let cur = current_song().unwrap();
+        assert_eq!((cur["type"].as_str(), cur["title"].as_str(), cur["difficulty_id"].as_i64()),
+            (Some("song_start"), Some("系ぎて"), Some(6)));
+        emit(Judge::new(0, JudgeData { interpolation: 0.2, offset: 0.001 }, None));
+        emit(Judge::new(0, JudgeData { interpolation: 4.0, offset: 0.0 }, None));
+        assert_eq!((COUNTS[0].load(Ordering::Relaxed), COUNTS[4].load(Ordering::Relaxed)), (1, 1));
+        song_end("finish");
+        assert!(current_song().is_none());
+        // song_end serialisation
+        let e = SongEnd { kind: "song_end", play: 1, t_ms: 2.0, reason: "finish", duration_ms: 1.0, judged: 2,
+            grades: GradeCounts { critical_perfect: 1, miss: 1, ..Default::default() } };
+        let v = serde_json::to_value(Event::SongEnd(e)).unwrap();
+        assert_eq!((v["type"].as_str(), v["grades"]["CriticalPerfect"].as_u64(), v["grades"]["Miss"].as_u64()),
+            (Some("song_end"), Some(1), Some(1)));
+        // judge events are serialised flat, unchanged apart from `play`
+        let v = serde_json::to_value(Event::Judge(Judge::new(0, JudgeData { interpolation: 1.5, offset: 0.03 }, None))).unwrap();
+        assert_eq!((v["type"].as_str(), v["grade"].as_str()), (Some("judge"), Some("Perfect")));
+        assert!(v.get("play").is_some());
     }
 }

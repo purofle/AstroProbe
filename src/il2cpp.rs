@@ -26,11 +26,33 @@ pub const PUSH: (&CStr, &CStr, &CStr, c_int) =
 pub const TALLY_NOTE: (&CStr, &CStr, &CStr, c_int) =
     (c"AstroDX.Gameplay.Systems", c"StatisticsSystem", c"TallyNote", 3);
 
+/// Song lifecycle (all optional: judgements work without them)
+pub const DATA_INIT: (&CStr, &CStr, &CStr, c_int) =
+    (c"AstroDX.Gameplay.Systems", c"DataSystem", c"Initialize", 0);
+pub const FINISH: (&CStr, &CStr, &CStr, c_int) = (c"AstroDX.Gameplay.Systems", c"GameSystem", c"Finish", 0);
+pub const RESTART: (&CStr, &CStr, &CStr, c_int) = (c"AstroDX.Gameplay.Systems", c"GameSystem", c"Restart", 0);
+pub const QUIT: (&CStr, &CStr, &CStr, c_int) = (c"AstroDX.Gameplay.Systems", c"GameSystem", c"Quit", 0);
+pub const ALIAS: (&CStr, &CStr, &CStr, c_int) = (c"AstroDX.Cache", c"Difficulty", c"get_Alias", 0);
+
 pub struct Targets {
     /// Statistics.Push(in NoteCategory, in JudgeData) — every judgement goes through it
     pub push: *mut c_void,
     /// StatisticsSystem.TallyNote(Note, JudgeData, double) — supplies note context
     pub tally_note: Option<*mut c_void>,
+    pub song: SongTargets,
+}
+
+#[derive(Default)]
+pub struct SongTargets {
+    /// DataSystem.Initialize() — gameplay scene set up, chart + difficulty loaded
+    pub data_init: Option<*mut c_void>,
+    /// GameSystem.Finish() — played to the end
+    pub finish: Option<*mut c_void>,
+    /// static GameSystem.Restart() / Quit()
+    pub restart: Option<*mut c_void>,
+    pub quit: Option<*mut c_void>,
+    /// Difficulty.get_Alias(): (code, MethodInfo*), called to name the difficulty
+    pub alias: Option<(*mut c_void, *const c_void)>,
 }
 
 type FnVoidPtr = unsafe extern "C" fn() -> *mut c_void;
@@ -169,6 +191,11 @@ fn rva(p: *const c_void) -> usize {
 }
 
 unsafe fn method(api: &Api, image: *mut c_void, spec: (&CStr, &CStr, &CStr, c_int)) -> Result<*mut c_void, String> {
+    method_info(api, image, spec).map(|(_, code)| code)
+}
+
+/// (MethodInfo*, code pointer)
+unsafe fn method_info(api: &Api, image: *mut c_void, spec: (&CStr, &CStr, &CStr, c_int)) -> Result<(*const c_void, *mut c_void), String> {
     let (ns, cls, name, argc) = spec;
     let klass = (api.class_from_name)(image, ns.as_ptr(), cls.as_ptr());
     if klass.is_null() {
@@ -185,7 +212,12 @@ unsafe fn method(api: &Api, image: *mut c_void, spec: (&CStr, &CStr, &CStr, c_in
     }
     log::info!("resolved {}.{}::{} @ {:p} (rva {:#x})",
         ns.to_string_lossy(), cls.to_string_lossy(), name.to_string_lossy(), ptr, rva(ptr));
-    Ok(ptr)
+    Ok((mi as *const c_void, ptr))
+}
+
+/// An optional target: a failure is logged, not fatal.
+fn optional<T>(what: &str, r: Result<T, String>) -> Option<T> {
+    r.map_err(|e| log::warn!("{e}; no {what} events")).ok()
 }
 
 /// Must run on a thread attached to il2cpp, after il2cpp_init returned.
@@ -210,5 +242,12 @@ unsafe fn resolve(api: &Api) -> Result<Targets, String> {
             None
         }
     };
-    Ok(Targets { push, tally_note })
+    let song = SongTargets {
+        data_init: optional("song_start", method(api, image, DATA_INIT)),
+        finish: optional("song_end(finish)", method(api, image, FINISH)),
+        restart: optional("song_end(restart)", method(api, image, RESTART)),
+        quit: optional("song_end(quit)", method(api, image, QUIT)),
+        alias: optional("difficulty name", method_info(api, image, ALIAS)).map(|(mi, code)| (code, mi)),
+    };
+    Ok(Targets { push, tally_note, song })
 }

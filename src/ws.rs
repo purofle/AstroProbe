@@ -34,6 +34,7 @@ fn hello() -> String {
         "hooked": HOOKED.load(Ordering::Acquire),
         "dropped": events::DROPPED.load(Ordering::Relaxed),
         "grades": ["CriticalPerfect", "Perfect", "Great", "Good", "Miss"],
+        "song": events::current_song(),
     })
     .to_string()
 }
