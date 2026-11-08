@@ -1,67 +1,102 @@
-// Compile And64InlineHook (C++, MIT) into the cdylib.
+// Compile ShadowHook (bytedance/android-inline-hook v2.0.1, MIT; C) from the
+// third_party/android-inline-hook submodule into the cdylib.
 //
-// Upstream hard-codes a 4 KiB page size, which makes mprotect() fail with
-// EINVAL on 16 KiB-page devices. We patch a copy in OUT_DIR at build time
-// instead of editing the vendored source.
-use std::{env, fs, path::PathBuf};
+// Its CMake build produces libshadowhook.so + libshadowhook_nothing.so; we
+// compile the former statically into libjudgehook.so (minus the JNI glue) and
+// build the latter as a separate tiny .so next to libjudgehook.so in
+// target/<triple>/<profile>/: shadowhook_init() dlopens it by name to learn
+// bionic's soinfo layout and fails without it, so it must ship in the APK.
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     // host builds (cargo test on the dev machine) only exercise the pure-Rust parts
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
         return;
     }
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("third_party/And64InlineHook/And64InlineHook.cpp");
-    println!("cargo:rerun-if-changed={}", src.display());
+    build_shadowhook();
 
-    let mut code = fs::read_to_string(&src).unwrap_or_else(|e| {
-        panic!("{}: {e} (run: git submodule update --init)", src.display())
-    });
-
-    let patches: &[(&str, &str)] = &[
-        // runtime page size for every mprotect() computation
-        (
-            "#define __page_size                4096",
-            "#include <unistd.h>\n#define __page_size                ((uintptr_t)sysconf(_SC_PAGESIZE))",
-        ),
-        // __aligned__ needs a constant: use the largest Android page size
-        (
-            "static __attribute__((__aligned__(__page_size)))",
-            "static __attribute__((__aligned__(16384)))",
-        ),
-    ];
-    for (from, to) in patches {
-        assert!(code.contains(from), "And64InlineHook patch anchor not found: {from}");
-        code = code.replacen(from, to, 1);
-    }
-
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("And64InlineHook.cpp");
-    fs::write(&out, code).unwrap();
-
-    cc::Build::new()
-        .cpp(true)
-        .file(&out)
-        .include(src.parent().unwrap())
-        .flag_if_supported("-std=c++17")
-        .flag_if_supported("-fno-exceptions")
-        .flag_if_supported("-fno-rtti")
-        .warnings(false)
-        .compile("and64inlinehook");
-
-    // __builtin___clear_cache in And64InlineHook lowers to a call to __clear_cache,
-    // which lives in compiler-rt's static builtins. Bionic does not export it and
-    // rustc does not link the builtins archive, so without this the .so fails to
-    // dlopen with: cannot locate symbol "__clear_cache".
-    // Must come after and64inlinehook on the link line (static archive order).
+    // __builtin___clear_cache lowers to a call to __clear_cache, which lives in
+    // compiler-rt's static builtins. Bionic does not export it and rustc does not
+    // link the builtins archive, so without this the .so fails to dlopen with:
+    // cannot locate symbol "__clear_cache".
+    // Must come after the shadowhook archive on the link line (static archive order).
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let lib = format!("clang_rt.builtins-{arch}-android");
     let dir = find_ndk_builtins(&format!("lib{lib}.a"))
-        .unwrap_or_else(|| panic!("lib{lib}.a not found under $ANDROID_NDK_HOME (run inside: nix develop .#android)"));
+        .unwrap_or_else(|| panic!("lib{lib}.a not found under $ANDROID_NDK_HOME (run inside: nix develop .nix-dev/profile)"));
     println!("cargo:rustc-link-search=native={}", dir.display());
     println!("cargo:rustc-link-lib=static={lib}");
 
-    // A64_LOGI/LOGE use __android_log_print
+    // ShadowHook logs with __android_log_print
     println!("cargo:rustc-link-lib=log");
+}
+
+fn build_shadowhook() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("third_party/android-inline-hook/shadowhook/src/main/cpp");
+    println!("cargo:rerun-if-changed={}", root.display());
+    assert!(
+        root.join("shadowhook.c").is_file(),
+        "{}: missing (run: git submodule update --init)",
+        root.display()
+    );
+    let arch = match env::var("CARGO_CFG_TARGET_ARCH").unwrap().as_str() {
+        "aarch64" => "arm64",
+        "arm" => "arm",
+        a => panic!("shadowhook: unsupported arch {a}"),
+    };
+
+    let mut files = Vec::new();
+    for dir in [root.clone(), root.join("arch").join(arch), root.join("common")]
+        .into_iter()
+        .chain(fs::read_dir(root.join("third_party")).unwrap().flatten().map(|e| e.path()))
+    {
+        for f in fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()) {
+            let ext = f.extension().and_then(|e| e.to_str());
+            // sh_jni.c is the Java binding (exports JNI_OnLoad): not wanted here
+            if matches!(ext, Some("c" | "S")) && f.file_name().unwrap() != "sh_jni.c" {
+                files.push(f);
+            }
+        }
+    }
+    files.sort();
+
+    cc::Build::new()
+        .files(&files)
+        .includes([
+            root.clone(),
+            root.join("include"),
+            root.join("arch").join(arch),
+            root.join("common"),
+            root.join("third_party/xdl"),
+            root.join("third_party/bsd"),
+            root.join("third_party/lss"),
+        ])
+        .flag("-std=c11")
+        .flag("-ffunction-sections")
+        .flag("-fdata-sections")
+        .opt_level_str("s")
+        .warnings(false)
+        .compile("shadowhook");
+
+    // libshadowhook_nothing.so: same flags as upstream CMakeLists.txt
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let nothing = out.join("libshadowhook_nothing.so");
+    let mut cmd = cc::Build::new().get_compiler().to_command();
+    cmd.args([
+        "-shared", "-Oz", "-fno-ident", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
+        "-nostdlib", "-nostartfiles", "-nodefaultlibs",
+        "-Wl,--strip-all", "-Wl,--as-needed", "-Wl,--hash-style=sysv", "-Wl,--build-id=none",
+        "-Wl,-z,max-page-size=16384", "-Wl,-soname,libshadowhook_nothing.so",
+    ]);
+    cmd.arg("-o").arg(&nothing).arg(root.join("nothing/sh_nothing.c"));
+    let status = cmd.status().expect("run C compiler for libshadowhook_nothing.so");
+    assert!(status.success(), "building libshadowhook_nothing.so failed: {cmd:?}");
+    // OUT_DIR = target/<triple>/<profile>/build/judgehook-<hash>/out
+    let profile_dir: &Path = out.ancestors().nth(3).unwrap();
+    fs::copy(&nothing, profile_dir.join("libshadowhook_nothing.so")).unwrap();
 }
 
 /// $NDK/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux/<file>

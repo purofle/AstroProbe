@@ -10,9 +10,11 @@
 # which is git-ignored. Key and store password must be the same.
 #
 # Steps:
-#   1. cargo ndk build of the crate at the repo root (arm64-v8a)
+#   1. cargo ndk build of the crate at the repo root (arm64-v8a), with ShadowHook
+#      from the third_party/android-inline-hook submodule
 #   2. libmain.so += DT_NEEDED libjudgehook.so   (patchelf, keeps 16 KiB alignment)
-#   3. replace/add both .so in a copy of the APK (arm64-v8a only)
+#   3. replace/add libmain.so, libjudgehook.so and libshadowhook_nothing.so
+#      in a copy of the APK (arm64-v8a only)
 #   4. zipalign (16 KiB page alignment) + apksigner
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,9 +33,11 @@ ALIAS=${KEY_ALIAS:-$( [ -f "$KS_MD" ] && sed -n 's/^KEY_ALIAS=//p' "$KS_MD" )}
 [ -n "$PASS" ] && [ -n "$ALIAS" ] || { echo "set KS_PASS and KEY_ALIAS (or provide $KS_MD)"; exit 1; }
 
 echo "== 1/4 build libjudgehook.so"
-[ -f "$ROOT/third_party/And64InlineHook/And64InlineHook.cpp" ] || git -C "$ROOT" submodule update --init
+[ -f "$ROOT/third_party/android-inline-hook/shadowhook/src/main/cpp/shadowhook.c" ] || git -C "$ROOT" submodule update --init
 ( cd "$ROOT" && cargo ndk -t "$ABI" -P 25 build --release 2>&1 | grep -E "^(warning|error)|Finished" )
 SO=$ROOT/target/aarch64-linux-android/release/libjudgehook.so
+# shadowhook_init() dlopens it by name and fails without it (built by build.rs)
+NOTHING=$ROOT/target/aarch64-linux-android/release/libshadowhook_nothing.so
 
 # Every undefined (non-weak) dynamic symbol must be exported by the NDK stub of
 # a lib we DT_NEEDED, at our minSdk. bionic does NOT export compiler-rt builtins
@@ -61,13 +65,13 @@ else
   patchelf --page-size 16384 --add-needed libjudgehook.so "$MAIN"
 fi
 readelf -d "$MAIN" | grep NEEDED | sed 's/^/   /'
-cp "$SO" "$WORK/stage/lib/$ABI/libjudgehook.so"
+cp "$SO" "$NOTHING" "$WORK/stage/lib/$ABI/"
 
 echo "== 3/4 repack"
 cp "$IN" "$WORK/unsigned.apk"
 chmod u+w "$WORK/unsigned.apk"
 # old v2/v3 signature block is invalid after this; apksigner replaces it
-( cd "$WORK/stage" && zip -q -X "$WORK/unsigned.apk" "lib/$ABI/libmain.so" "lib/$ABI/libjudgehook.so" )
+( cd "$WORK/stage" && zip -q -X "$WORK/unsigned.apk" lib/$ABI/*.so )
 
 echo "== 4/4 align + sign"
 "$BUILD_TOOLS/zipalign" -P 16 -f 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
