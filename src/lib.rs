@@ -9,6 +9,9 @@
 //!                                game methods by name and install their hooks
 //!   game main thread          -> hooks push `Judgement` events into a bounded queue
 //!   broadcaster thread        -> serialise to JSON, send to every WS client
+//!                                and to dglab.rs, which turns them into pulses for
+//!                                the DG-LAB APP connected to our embedded relay
+//!   the same port also serves the DG-LAB control page (web.rs)
 //!
 //! If the GOT hook cannot be installed, the init thread falls back to polling
 //! for libil2cpp.so and hooks `il2cpp_init` from there.
@@ -17,6 +20,7 @@
 #![cfg_attr(not(target_os = "android"), allow(dead_code, unused_imports))]
 
 mod config;
+mod dglab;
 mod events;
 #[cfg(target_os = "android")]
 mod got;
@@ -26,6 +30,7 @@ mod hooks;
 mod il2cpp;
 #[cfg(target_os = "android")]
 mod inline;
+mod web;
 mod ws;
 
 use std::{

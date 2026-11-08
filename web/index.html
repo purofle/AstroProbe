@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151229">
+<title>AstroProbe × DG-LAB</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --ink: #151229;
+    --panel: #1f1b3a;
+    --line: #352f5e;
+    --text: #eeedf8;
+    --muted: #a39ec9;
+    --miss: #a7abc0;
+    --good: #3cc47c;
+    --great: #f2559c;
+    --break: #f6b93b;
+    --stop: #ff4a55;
+    --judge: "Avenir Next Condensed", "Bahnschrift", "DIN Alternate", "Roboto Condensed", "sans-serif-condensed", "Arial Narrow", sans-serif;
+    --body: system-ui, -apple-system, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--ink); color: var(--text);
+    font: 15px/1.6 var(--body);
+    padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 18px 32px; }
+  a { color: var(--text); }
+  button, select, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* ---------- header */
+  .top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+  h1 { margin: 0; font: italic 800 26px/1.1 var(--judge); letter-spacing: -0.01em; }
+  h1 span { color: var(--muted); font-weight: 600; }
+  .conn { margin: 10px 0 0; color: var(--muted); font-size: 14px; display: grid; gap: 2px; }
+  .conn b { color: var(--text); font-weight: 600; }
+  .lamp { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; background: var(--line); }
+  .lamp.on { background: var(--good); }
+  .lamp.wait { background: var(--break); }
+  .lamp.off { background: var(--stop); }
+
+  h2 { font-size: 15px; font-weight: 600; margin: 34px 0 6px; }
+  .hint { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; max-width: 62ch; }
+
+  /* ---------- judgement rules (the signature element) */
+  .rules { list-style: none; margin: 0; padding: 0; }
+  .rule {
+    --c: var(--miss);
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center;
+    padding: 14px 0 16px; border-top: 1px solid var(--line);
+  }
+  .rule:last-child { border-bottom: 1px solid var(--line); }
+  .rule[data-k="Good"] { --c: var(--good); }
+  .rule[data-k="Great"] { --c: var(--great); }
+  .rule[data-k="Break"] { --c: var(--break); }
+  .rule.off { --c: var(--line); }
+  .name { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .judge {
+    font: italic 800 clamp(30px, 8vw, 42px)/1 var(--judge); letter-spacing: -0.015em;
+    color: var(--c); transition: text-shadow .25s ease-out;
+  }
+  .rule.off .judge { color: var(--muted); opacity: .55; }
+  .rule.flash .judge { text-shadow: 0 0 18px var(--c), 0 0 2px var(--c); transition: none; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .count { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .switch { justify-self: end; }
+  .bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+  .bar output { font: italic 700 20px/1 var(--judge); min-width: 3.4em; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=range] {
+    --p: 50%;
+    flex: 1; min-width: 0; height: 28px; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 14px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--c) var(--p), var(--panel) var(--p));
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  input[type=range]::-moz-range-track { height: 14px; border-radius: 3px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+  input[type=range]::-moz-range-progress { height: 14px; border-radius: 3px; background: var(--c); }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 6px; height: 26px; margin-top: -6px; border-radius: 2px; background: var(--text);
+  }
+  input[type=range]::-moz-range-thumb { width: 6px; height: 26px; border: 0; border-radius: 2px; background: var(--text); }
+  .opts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; color: var(--muted); font-size: 14px; }
+  .opts label { display: inline-flex; align-items: center; gap: 6px; }
+  .field {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; color: var(--text);
+  }
+  input.field[type=number] { width: 5.5em; font-variant-numeric: tabular-nums; }
+  .ghost {
+    background: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; cursor: pointer;
+  }
+  .ghost:hover { border-color: var(--muted); }
+  .ghost:disabled { opacity: .45; cursor: default; }
+
+  /* toggle switch, used for rules and arming */
+  .switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
+  .switch input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+  .switch span { position: absolute; inset: 0; border-radius: 13px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 4px; left: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .15s, background .15s; }
+  .switch input:checked + span { background: var(--on, var(--text)); box-shadow: none; }
+  .switch input:checked + span::after { transform: translateX(20px); background: var(--ink); }
+  .switch input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  /* ---------- pairing */
+  .pair { display: grid; grid-template-columns: 188px minmax(0, 1fr); gap: 18px; align-items: start;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  @media (max-width: 560px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+  #qr { width: 188px; max-width: 100%; aspect-ratio: 1; background: #fff; border-radius: 6px; padding: 6px; }
+  #qr svg { display: block; width: 100%; height: 100%; }
+  .pair p { margin: 0 0 10px; }
+  .addr { font-size: 13px; color: var(--muted); word-break: break-all; }
+  details.pairing > summary { cursor: pointer; color: var(--muted); margin: 0 0 10px; }
+  .devices { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+  .devices li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .devices .meta { color: var(--muted); font-size: 13.5px; display: inline-flex; gap: 12px; font-variant-numeric: tabular-nums; }
+  .devices input { width: 18px; height: 18px; accent-color: var(--good); }
+  .empty { color: var(--muted); }
+
+  /* ---------- settings */
+  .settings { display: grid; gap: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: none; border: 0; padding: 5px 14px; cursor: pointer; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed=true] { background: var(--text); color: var(--ink); font-weight: 600; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+
+  /* ---------- log */
+  details.log > summary { cursor: pointer; color: var(--muted); }
+  .log ol { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; color: var(--muted); max-height: 260px; overflow-y: auto; }
+  .log li { padding: 2px 0; }
+  .log time { font-variant-numeric: tabular-nums; margin-right: 10px; color: var(--line); filter: brightness(1.8); }
+
+  /* ---------- bottom console */
+  .console {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
+    background: color-mix(in srgb, var(--ink) 92%, transparent); backdrop-filter: blur(8px);
+    border-top: 1px solid var(--line);
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .console .in { max-width: 760px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+  .armed { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; cursor: pointer; }
+  .armed .switch { --on: var(--great); width: 58px; height: 32px; }
+  .armed .switch span { border-radius: 16px; }
+  .armed .switch span::after { width: 24px; height: 24px; }
+  .armed .switch input:checked + span::after { transform: translateX(26px); }
+  .armed strong { display: block; font-weight: 600; }
+  .armed small { display: block; color: var(--muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stop {
+    background: var(--stop); color: #fff; border: 0; border-radius: 8px; padding: 10px 18px; font-weight: 700; cursor: pointer; flex: none;
+  }
+  .stop:disabled, .armed.disabled { opacity: .45; cursor: default; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::after { transition: none !important; }
+    .rule.flash .judge { text-shadow: none; text-decoration: underline 3px var(--c); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="top">
+      <h1>AstroProbe <span>× DG-LAB</span></h1>
+    </div>
+    <div class="conn">
+      <div><span class="lamp" id="gameLamp"></span><b id="gameState">正在连接游戏…</b><span id="song"></span></div>
+      <div><span class="lamp" id="appLamp"></span><b id="appState">没有 APP 连接</b><span id="appDetail"></span></div>
+    </div>
+  </header>
+
+  <h2>判定</h2>
+  <p class="hint">打出这些判定时，郊狼按设定的强度和时长输出波形。强度是波形强度的百分比，通道强度的上限在 DG-LAB APP 里调。</p>
+  <ul class="rules" id="rules"></ul>
+
+  <h2>连接 DG-LAB APP</h2>
+  <details class="pairing" id="pairing" open>
+    <summary id="pairSummary">显示二维码</summary>
+    <div class="pair">
+      <div id="qr" role="img" aria-label="APP 配对二维码"></div>
+      <div>
+        <p>在 DG-LAB APP 里选 Socket 控制，扫描这个二维码。APP 和本页在同一台手机上时，可以直接<a id="pairLink" href="#">打开 APP 连接</a>。</p>
+        <p class="row"><label for="addrSel" class="sub">APP 连接的地址</label>
+          <select id="addrSel" class="field"></select></p>
+        <p class="addr" id="appUrl"></p>
+        <p class="sub">二维码固定不变，游戏重启后 APP 重新连上即可，不用再扫。</p>
+      </div>
+    </div>
+  </details>
+  <ul class="devices" id="devices"></ul>
+
+  <h2>输出设置</h2>
+  <div class="settings">
+    <div class="row"><span>通道</span>
+      <div class="seg" id="chan" role="group" aria-label="输出通道">
+        <button type="button" data-v="A">A</button><button type="button" data-v="B">B</button><button type="button" data-v="AB">A 和 B</button>
+      </div>
+    </div>
+    <label class="row">波形正在播放时，同样强度的判定至少隔
+      <input type="number" class="field" id="gap" min="0" max="5000" step="10"> 毫秒才重新开始</label>
+    <label class="row"><span class="switch"><input type="checkbox" id="autoArm"><span></span></span>游戏启动时自动开启输出</label>
+  </div>
+
+  <h2>记录</h2>
+  <details class="log"><summary>最近的连接和输出记录</summary><ol id="log"></ol></details>
+</main>
+
+<div class="console">
+  <div class="in">
+    <label class="armed" id="armWrap">
+      <span class="switch"><input type="checkbox" id="armed" disabled><span></span></span>
+      <span><strong id="armTitle">输出已关闭</strong><small id="armSub">打开后，判定会触发郊狼</small></span>
+    </label>
+    <button class="stop" id="stop" type="button" disabled>停止</button>
+  </div>
+</div>
+
+<script src="vendor/qrcode.js"></script>
+<script>
+"use strict";
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const RULES = [
+    { k: "Miss", sub: "" },
+    { k: "Good", sub: "" },
+    { k: "Great", sub: "" },
+    { k: "Break", sub: "绝赞，Critical Perfect 以外" },
+  ];
+  let st = null;        // last status from the game
+  let ws = null;
+  let pending = null;   // settings being edited, not yet confirmed by a status
+  let sendTimer = 0;
+
+  // ---------------------------------------------------------------- connection to the game
+  function connect() {
+    ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + (location.host || "127.0.0.1:8765") + "/control");
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch (_) { return; }
+      if (m.type === "status") onStatus(m);
+      else if (m.type === "log") addLog(m.line);
+      else if (m.type === "fired") onFired(m);
+    };
+    ws.onclose = () => {
+      ws = null;
+      setLamp("gameLamp", "off");
+      $("gameState").textContent = "和游戏断开了";
+      $("song").textContent = "。游戏没在运行，或手机和本设备不在同一网络，正在重试…";
+      enableControls(false);
+      setTimeout(connect, 1500);
+    };
+  }
+  function send(obj) {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  }
+  function setLamp(id, cls) { $(id).className = "lamp " + cls; }
+
+  // ---------------------------------------------------------------- status
+  function onStatus(m) {
+    const first = !st;
+    st = m;
+    if (first) {
+      $("log").replaceChildren();
+      (m.log || []).forEach(addLog);
+    }
+    setLamp("gameLamp", m.hooked ? "on" : "wait");
+    $("gameState").textContent = m.hooked ? "游戏已连接" : "游戏已连接，判定 hook 还没就绪";
+    const s = m.song;
+    $("song").textContent = s ? `，正在玩 ${s.title || "未知曲目"}${s.difficulty ? `（${s.difficulty}${s.level ? " " + s.level : ""}）` : ""}` : "，不在游戏中";
+
+    const devs = m.apps.flatMap((a) => a.devices);
+    const coyotes = devs.filter(isPulse);
+    setLamp("appLamp", m.apps.length ? (coyotes.length ? "on" : "wait") : "");
+    $("appState").textContent = m.apps.length ? `${m.apps.length} 个 APP 已连接` : "没有 APP 连接";
+    $("appDetail").textContent = m.apps.length
+      ? (coyotes.length ? `，${coyotes.length} 台郊狼在线` : "，APP 里还没连上郊狼")
+      : "";
+
+    if (!pending) applySettings(m.settings);
+    renderWaves(m.waves);
+    renderDevices(m);
+    renderPairing(m);
+    renderArm(m.armed);
+    for (const r of RULES) setCount(r.k, m.fired[r.k]);
+    enableControls(true);
+  }
+
+  function isPulse(d) {
+    return typeof d.type === "string" && d.type.startsWith("COYOTE") && !(d.slotState && d.slotState.hasDevice === false);
+  }
+
+  function enableControls(on) {
+    $("armed").disabled = !on;
+    $("stop").disabled = !on;
+    $("armWrap").classList.toggle("disabled", !on);
+    document.querySelectorAll("#rules input, #rules select, #rules button, .settings input, .settings button").forEach((el) => (el.disabled = !on));
+  }
+
+  // ---------------------------------------------------------------- rules
+  const ui = {};
+  function buildRules() {
+    const ul = $("rules");
+    for (const { k, sub } of RULES) {
+      const li = document.createElement("li");
+      li.className = "rule";
+      li.dataset.k = k;
+      li.innerHTML = `
+        <div class="name"><span class="judge">${k}</span><span class="sub"></span></div>
+        <label class="switch" title="启用 ${k}"><input type="checkbox" aria-label="启用 ${k}"><span></span></label>
+        <div class="bar"><input type="range" min="0" max="100" step="1" aria-label="${k} 的波形强度"><output></output></div>
+        <div class="opts">
+          <label>持续 <input type="number" class="field" min="100" max="10000" step="100" aria-label="${k} 的持续时间"> 毫秒</label>
+          <label>波形 <select class="field" aria-label="${k} 的波形"></select></label>
+          <button type="button" class="ghost">发送一次</button>
+          <span class="count"></span>
+        </div>`;
+      li.querySelector(".sub").textContent = sub;
+      const [on, range, ms] = li.querySelectorAll("input");
+      const r = { li, on, range, ms, out: li.querySelector("output"), wave: li.querySelector("select"), count: li.querySelector(".count") };
+      on.addEventListener("change", () => edit((s) => (s.rules[k].on = on.checked)));
+      range.addEventListener("input", () => {
+        paintRange(r, Number(range.value));
+        edit((s) => (s.rules[k].pct = Number(range.value)));
+      });
+      ms.addEventListener("change", () => {
+        const v = Math.min(10000, Math.max(100, Math.round(Number(ms.value) || 0)));
+        ms.value = v;
+        edit((s) => (s.rules[k].ms = v));
+      });
+      r.wave.addEventListener("change", () => edit((s) => (s.rules[k].wave = r.wave.value)));
+      li.querySelector("button").addEventListener("click", () => send({ cmd: "test", rule: k }));
+      ui[k] = r;
+      ul.append(li);
+    }
+  }
+  function paintRange(r, v) {
+    r.range.style.setProperty("--p", v + "%");
+    r.out.textContent = v + "%";
+  }
+  function applySettings(s) {
+    for (const { k } of RULES) {
+      const r = ui[k], rule = s.rules[k];
+      r.li.classList.toggle("off", !rule.on);
+      r.on.checked = rule.on;
+      if (document.activeElement !== r.range) { r.range.value = rule.pct; paintRange(r, rule.pct); }
+      if (document.activeElement !== r.ms) r.ms.value = rule.ms;
+      r.wave.dataset.want = rule.wave;
+      if (r.wave.querySelector(`option[value="${CSS.escape(rule.wave)}"]`)) r.wave.value = rule.wave;
+    }
+    document.querySelectorAll("#chan button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === s.channels)));
+    if (document.activeElement !== $("gap")) $("gap").value = s.min_gap_ms;
+    $("autoArm").checked = s.auto_arm;
+  }
+  let wavesKey = "";
+  function renderWaves(waves) {
+    const key = waves.map((w) => w.id).join();
+    if (key === wavesKey) return;
+    wavesKey = key;
+    for (const { k } of RULES) {
+      const sel = ui[k].wave;
+      sel.replaceChildren(...waves.map((w) => new Option(w.name, w.id)));
+      sel.value = sel.dataset.want || "SHOCK";
+    }
+  }
+  function setCount(k, n) {
+    ui[k].count.textContent = n ? `本次启动触发 ${n} 次` : "";
+  }
+
+  // settings edits: change a copy, show it at once, send it after a short pause
+  function edit(fn) {
+    if (!st) return;
+    pending = pending || JSON.parse(JSON.stringify(st.settings));
+    fn(pending);
+    applySettings(pending);
+    clearTimeout(sendTimer);
+    sendTimer = setTimeout(() => {
+      send({ cmd: "settings", settings: pending });
+      pending = null;
+    }, 200);
+  }
+
+  // ---------------------------------------------------------------- firing feedback
+  function onFired(m) {
+    const r = ui[m.rule];
+    if (!r) return;
+    if (m.count) RULES.forEach((x, i) => setCount(x.k, m.count[i]));
+    r.li.classList.remove("flash");
+    void r.li.offsetWidth;
+    r.li.classList.add("flash");
+    clearTimeout(r.flashTimer);
+    r.flashTimer = setTimeout(() => r.li.classList.remove("flash"), Math.min(m.ms, 1200));
+  }
+
+  // ---------------------------------------------------------------- APP pairing + devices
+  let qrFor = "";
+  function addrOptions(m) {
+    const host = location.hostname;
+    const out = [];
+    const add = (h, label) => { if (h && !out.some((o) => o.h === h)) out.push({ h, label }); };
+    const loop = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    if (host && !loop) add(host, `${host}（本页的地址）`);
+    for (const a of m.addrs) add(a, a);
+    add("127.0.0.1", "127.0.0.1（APP 和游戏在同一台手机上）");
+    return out;
+  }
+  function renderPairing(m) {
+    const sel = $("addrSel");
+    const opts = addrOptions(m);
+    const prev = sel.value;
+    const key = opts.map((o) => o.h).join();
+    if (sel.dataset.key !== key) {
+      sel.dataset.key = key;
+      sel.replaceChildren(...opts.map((o) => new Option(o.label, o.h)));
+      if (opts.some((o) => o.h === prev)) sel.value = prev;
+    }
+    const url = `ws://${sel.value}:${m.port}/?tid=${encodeURIComponent(m.tid)}`;
+    const link = `https://dungeon-lab.cn/s/?v=1&action=socket&url=${encodeURIComponent(url)}`;
+    $("appUrl").textContent = url;
+    $("pairLink").href = link;
+    if (qrFor !== link) {
+      qrFor = link;
+      try {
+        const q = qrcode(0, "M");
+        q.addData(link);
+        q.make();
+        $("qr").innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+      } catch (_) {
+        $("qr").textContent = "二维码生成失败，请手动输入下面的地址";
+      }
+    }
+    const paired = m.apps.length > 0;
+    const det = $("pairing");
+    if (det.dataset.paired !== String(paired)) {
+      det.dataset.paired = String(paired);
+      det.open = !paired;
+    }
+    $("pairSummary").textContent = paired ? "显示二维码（再连一个 APP）" : "扫码连接";
+  }
+  function renderDevices(m) {
+    const ul = $("devices");
+    const items = [];
+    for (const a of m.apps) {
+      if (!a.devices.length) {
+        const li = document.createElement("li");
+        li.className = "empty";
+        li.textContent = `${a.peer.split(":")[0]} 的 APP 没有设备。在 APP 里连接郊狼后会出现在这里。`;
+        items.push(li);
+      }
+      for (const d of a.devices) {
+        const li = document.createElement("li");
+        const pulse = isPulse(d);
+        const label = document.createElement("label");
+        label.className = "row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.disabled = !pulse;
+        cb.checked = pulse && !(pending || m.settings).excluded.includes(d.slotId);
+        cb.addEventListener("change", () => edit((s) => {
+          s.excluded = s.excluded.filter((x) => x !== d.slotId);
+          if (!cb.checked) s.excluded.push(d.slotId);
+        }));
+        const name = document.createElement("span");
+        name.textContent = d.name || d.slotId;
+        label.append(cb, name);
+        const meta = document.createElement("span");
+        meta.className = "meta";
+        const p = d.props || {};
+        const bits = [];
+        if (!pulse) bits.push(d.slotState && d.slotState.hasDevice === false ? "未连接" : "不是郊狼，不会输出");
+        if (p.intensityA !== undefined) bits.push(`A 通道 ${p.intensityA}`);
+        if (p.intensityB !== undefined) bits.push(`B 通道 ${p.intensityB}`);
+        if (p.power !== undefined) bits.push(`电量 ${p.power}%`);
+        meta.replaceChildren(...bits.map((t) => Object.assign(document.createElement("span"), { textContent: t })));
+        li.append(label, meta);
+        items.push(li);
+      }
+    }
+    ul.replaceChildren(...items);
+  }
+
+  // ---------------------------------------------------------------- arm / stop
+  function renderArm(on) {
+    $("armed").checked = on;
+    $("armTitle").textContent = on ? "输出已开启" : "输出已关闭";
+    $("armSub").textContent = on ? "关掉这个页面也会继续输出" : "打开后，判定会触发郊狼";
+  }
+  $("armed").addEventListener("change", () => send({ cmd: "arm", on: $("armed").checked }));
+  $("stop").addEventListener("click", () => send({ cmd: "stop", zero: false }));
+
+  // ---------------------------------------------------------------- settings
+  document.querySelectorAll("#chan button").forEach((b) => b.addEventListener("click", () => edit((s) => (s.channels = b.dataset.v))));
+  $("gap").addEventListener("change", () => {
+    const v = Math.min(5000, Math.max(0, Math.round(Number($("gap").value) || 0)));
+    edit((s) => (s.min_gap_ms = v));
+  });
+  $("autoArm").addEventListener("change", () => edit((s) => (s.auto_arm = $("autoArm").checked)));
+  $("addrSel").addEventListener("change", () => st && renderPairing(st));
+
+  // ---------------------------------------------------------------- log
+  function addLog(line) {
+    const li = document.createElement("li");
+    const t = document.createElement("time");
+    t.textContent = new Date(line.t).toLocaleTimeString();
+    li.append(t, line.msg);
+    const ol = $("log");
+    ol.prepend(li);
+    while (ol.children.length > 60) ol.lastChild.remove();
+  }
+
+  buildRules();
+  enableControls(false);
+  connect();
+})();
+</script>
+</body>
+</html>

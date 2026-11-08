@@ -54,8 +54,8 @@ pub struct Judge {
     play: u64,
     /// ms since the hook library was loaded (monotonic)
     t_ms: f64,
-    cat: &'static str,
-    grade: &'static str,
+    pub(crate) cat: &'static str,
+    pub(crate) grade: &'static str,
     grade_i: Option<i32>,
     /// Exact / Early / Late / Miss; null when the judgement carries no timing
     state: Option<&'static str>,
@@ -70,7 +70,7 @@ pub struct Judge {
     ex: bool,
     fireworks: bool,
     mine: bool,
-    note_cat: Option<&'static str>,
+    pub(crate) note_cat: Option<&'static str>,
     hold_len: Option<f32>,
     /// `timing` argument of StatisticsSystem.TallyNote, in ms (null for slides):
     /// the offset the game hands to Effects.SpawnText for the FAST/LATE text.

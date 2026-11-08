@@ -1,5 +1,5 @@
 //! Optional config: /sdcard/Android/data/com.Reflektone.AstroDX/files/judgehook.json
-//!   { "bind": "0.0.0.0", "port": 8765 }
+//!   { "bind": "0.0.0.0", "port": 8765, "web": true }
 //! The app can read its own external files dir without any permission.
 use serde::Deserialize;
 
@@ -15,11 +15,14 @@ pub struct Config {
     pub port: u16,
     /// max queued events before new ones are dropped (never blocks the game)
     pub queue: usize,
+    /// DG-LAB: the control page, the embedded relay the APP joins and the
+    /// judgement -> pulse logic, all on the same port (dglab.rs)
+    pub web: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { bind: "0.0.0.0".into(), port: 8765, queue: 4096 }
+        Self { bind: "0.0.0.0".into(), port: 8765, queue: 4096, web: true }
     }
 }
 

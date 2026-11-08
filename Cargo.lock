@@ -165,6 +165,7 @@ version = "0.2.0"
 dependencies = [
  "android_logger",
  "cc",
+ "httparse",
  "libc",
  "log",
  "serde",
