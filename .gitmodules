@@ -1,0 +1,3 @@
+[submodule "third_party/And64InlineHook"]
+	path = third_party/And64InlineHook
+	url = https://github.com/Rprop/And64InlineHook
